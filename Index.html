@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bouquet</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #040509; overflow: hidden; }
+  body { -webkit-user-select: none; user-select: none; touch-action: manipulation; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .pill {
+    position: fixed; top: 16px; z-index: 2; cursor: pointer;
+    padding: 9px 20px; border: 2px solid #46464f; border-radius: 999px;
+    background: rgba(4, 5, 9, .55); color: #e1e1e6;
+    font: italic 18px/1.2 Georgia, "DejaVu Serif", "Times New Roman", serif;
+  }
+  .pill:active { background: rgba(70, 70, 80, .5); }
+  #again { left: 16px; }
+  #wall  { right: 16px; }
+  @media (max-width: 520px) { .pill { font-size: 14px; padding: 8px 14px; top: 12px; } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<button class="pill" id="again">&#8635; see me bloom again?</button>
+<button class="pill" id="wall">&#8595; wallpaper</button>
+
+<script>
+// ---- colours (tap anywhere to cycle) ----------------------------------------
+const PALETTE = [
+  ['Navy Blue',        [25, 45, 210]],
+  ['Rose Pink',        [236, 84, 140]],
+  ['Crimson Red',      [214, 30, 52]],
+  ['Sunset Orange',    [245, 122, 36]],
+  ['Sunflower Yellow', [246, 202, 42]],
+  ['Lavender',         [162, 112, 236]],
+  ['Ocean Teal',       [22, 172, 172]],
+  ['Coral',            [250, 104, 92]]
+];
+const SEED = 7;
+const HINT = 'my dear katie, tap anywhere to change the color';
+const RAMP = ' .:-=+*oxO#%@';
+const BG = '#040509';
+const BLOOM_MS = 4200;
+
+// ---- seeded random ------------------------------------------------------------
+function mulberry(a) {
+  return () => {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const rand = mulberry(SEED);
+const ri = (a, b) => a + Math.floor(rand() * (b - a + 1));
+const rf = (a, b) => a + (b - a) * rand();
+const gauss = sd => sd * Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(6.2831853 * rand());
+
+// ---- layout (design space: 1594 x 996, x measured from centre) ----------------
+const stems = [];
+for (let i = 0; i < 26; i++)
+  stems.push({ sx: ri(-20, 20), ex: ri(-190, 190), ey: ri(330, 520), w: ri(4, 8) });
+
+const flowers = [
+  [-160, 400, 70], [150, 385, 68], [-20, 290, 85], [-90, 470, 60], [80, 470, 62],
+  [190, 480, 50], [-210, 520, 45], [20, 380, 60], [-20, 540, 55]
+].map(([x, y, s]) => {
+  const n = ri(6, 9), petals = [];
+  for (let i = 0; i < n; i++)
+    petals.push({ a: 2 * Math.PI * i / n + rand(), shade: ri(0, 40) });
+  return { x, y, s, petals };
+});
+
+const filler = [];
+for (let i = 0; i < 34; i++) {
+  const a = rand() < 0.75 ? rf(Math.PI * 1.02, Math.PI * 1.98) : rf(-0.4, Math.PI + 0.4);
+  const rad = rf(190, 330);
+  const gx = Math.cos(a) * rad * 1.15, gy = 440 + Math.sin(a) * rad * 0.85;
+  const specks = [];
+  for (let k = ri(10, 20); k--;)
+    specks.push({ dx: gauss(24), dy: gauss(24), r: ri(3, 7) });
+  filler.push({ gx, gy, specks });
+}
+
+// ---- helpers ----------------------------------------------------------------------
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const ease = t => t * t * (3 - 2 * t);
+const rgb = c => `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`;
+const lighten = (c, k) => c.map(v => v + (255 - v) * k);
+
+// draw the bouquet shapes into a small "source" canvas (black background)
+function drawSource(sctx, sw, sh, Wc, Hc, S, ty, base, p) {
+  sctx.setTransform(1, 0, 0, 1, 0, 0);
+  sctx.fillStyle = '#000';
+  sctx.fillRect(0, 0, sw, sh);
+  const kx = sw / Wc, ky = sh / Hc;                    // css px -> source px
+  sctx.setTransform(kx * S, 0, 0, ky * S, kx * Wc / 2, ky * ty);
+  const blob = (x, y, r, col) => {
+    if (r < 0.4) return;
+    sctx.fillStyle = rgb(col);
+    sctx.beginPath(); sctx.arc(x, y, r, 0, 6.2832); sctx.fill();
+  };
+
+  // wrapper / cone
+  sctx.fillStyle = 'rgb(150,150,150)';
+  sctx.beginPath();
+  sctx.moveTo(-135, 590); sctx.lineTo(135, 590); sctx.lineTo(8, 880); sctx.lineTo(-8, 880);
+  sctx.fill();
+  sctx.fillStyle = rgb([base[0] + 15, base[1] + 15, Math.min(255, base[2] + 20)]);
+  sctx.beginPath();
+  sctx.moveTo(-70, 745); sctx.lineTo(70, 745); sctx.lineTo(55, 785); sctx.lineTo(-55, 785);
+  sctx.fill();
+  blob(0, 765, 14, lighten(base, 0.2));
+
+  // stems grow first
+  const g = ease(clamp(p / 0.45));
+  sctx.strokeStyle = 'rgb(25,95,60)';
+  for (const s of stems) {
+    sctx.lineWidth = s.w;
+    sctx.beginPath();
+    sctx.moveTo(s.sx, 640);
+    sctx.lineTo(s.sx + (s.ex - s.sx) * g, 640 + (s.ey - 640) * g);
+    sctx.stroke();
+  }
+
+  // flowers bloom one after another
+  const dark = base.map(v => v * 0.58), dot = lighten(base, 0.45);
+  flowers.forEach((f, i) => {
+    const q = ease(clamp((p - 0.30 - i * 0.055) / 0.28));
+    if (q <= 0) return;
+    for (const pt of f.petals) {
+      const sh = pt.shade;
+      blob(f.x + Math.cos(pt.a) * f.s * 0.5 * q, f.y + Math.sin(pt.a) * f.s * 0.5 * q,
+           f.s * 0.45 * q,
+           [Math.min(255, base[0] + sh), Math.min(255, base[1] + sh), Math.min(255, base[2] + sh / 2)]);
+    }
+    blob(f.x, f.y, f.s * 0.28 * q, dark);
+    blob(f.x, f.y, f.s * 0.10 * q, dot);
+  });
+
+  // baby's-breath filler comes last
+  sctx.strokeStyle = 'rgb(30,90,60)';
+  sctx.lineWidth = 2;
+  filler.forEach((f, i) => {
+    const q = ease(clamp((p - 0.62 - (i / filler.length) * 0.2) / 0.2));
+    if (q <= 0) return;
+    const x = f.gx * q, y = 600 + (f.gy - 600) * q;
+    sctx.beginPath(); sctx.moveTo(0, 600); sctx.lineTo(x, y); sctx.stroke();
+    for (const s of f.specks) blob(x + s.dx, y + s.dy, s.r * q, [235, 235, 240]);
+  });
+}
+
+// render a full frame onto any canvas
+const srcCv = document.createElement('canvas');
+const smallCv = document.createElement('canvas');
+const glowCv = document.createElement('canvas');
+
+function render(cv, Wc, Hc, dpr, p, ci, showHint) {
+  const [name, base] = PALETTE[ci];
+  const small = Wc < 700;
+  const cw = small ? 6 : 7, ch = small ? 10 : 11, fs = small ? 11 : 12;
+  const cols = Math.floor(Wc / cw), rows = Math.floor(Hc / ch);
+  const labelH = showHint ? 120 : 90;                  // room kept for the text
+  const availH = Hc - labelH - 50;                      // 50 = space for the buttons
+  const S = Math.min(availH / 740, Wc / 860);           // design art spans y 150..880
+  const ty = 50 + (availH - 740 * S) / 2 - 150 * S;
+
+  cv.width = Math.round(Wc * dpr); cv.height = Math.round(Hc * dpr);
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = BG; ctx.fillRect(0, 0, Wc, Hc);
+
+  // 1) shapes -> tiny image (2x2 source pixels average into one text cell)
+  srcCv.width = cols * 2; srcCv.height = rows * 2;
+  const sctx = srcCv.getContext('2d');
+  drawSource(sctx, srcCv.width, srcCv.height, cols * cw, rows * ch, S, ty, base, p);
+  smallCv.width = cols; smallCv.height = rows;
+  const mctx = smallCv.getContext('2d', { willReadFrequently: true });
+  mctx.imageSmoothingEnabled = true; mctx.imageSmoothingQuality = 'high';
+  mctx.drawImage(srcCv, 0, 0, cols, rows);
+  const px = mctx.getImageData(0, 0, cols, rows).data;
+
+  // 2) image -> characters
+  ctx.font = `${fs}px "DejaVu Sans Mono", Menlo, Consolas, "Courier New", monospace`;
+  ctx.textBaseline = 'top';
+  const L = RAMP.length;
+  const xo = (Wc - cols * cw) / 2;
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const i = (y * cols + x) * 4;
+      const r = px[i], g = px[i + 1], b = px[i + 2];
+      const lum = Math.max(r, g, b) / 255;
+      if (lum < 0.08) continue;
+      let c, col;
+      if (Math.abs(r - g) < 8 && Math.abs(g - b) < 8 && lum < 0.7) {
+        c = (y & 1) ? '-' : '=';
+        col = 'rgb(150,150,150)';
+      } else {
+        const jit = (((x * 73856093) ^ (y * 19349663)) >>> 0) % 3 - 1;
+        const idx = Math.min(L - 1, Math.floor(Math.pow(lum, 0.8) * L) + jit);
+        c = RAMP[Math.max(idx, 1)];
+        col = `rgb(${Math.min(255, r * 1.15) | 0},${Math.min(255, g * 1.15) | 0},${Math.min(255, b * 1.15) | 0})`;
+      }
+      ctx.fillStyle = col;
+      ctx.fillText(c, xo + x * cw, y * ch);
+    }
+  }
+
+  // 3) cheap glow: shrink the frame, stretch it back and add it on top
+  const gw = Math.max(1, Math.round(cv.width / 6)), gh = Math.max(1, Math.round(cv.height / 6));
+  glowCv.width = gw; glowCv.height = gh;
+  const gctx = glowCv.getContext('2d');
+  gctx.imageSmoothingQuality = 'high';
+  gctx.drawImage(cv, 0, 0, gw, gh);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.9;
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(glowCv, 0, 0, cv.width, cv.height);
+  ctx.restore();
+
+  // 4) labels
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgb(235,235,240)';
+  ctx.font = `italic ${Math.round(Math.min(34, Math.max(24, Wc * 0.07)))}px Georgia, "DejaVu Serif", serif`;
+  ctx.fillText(name, Wc / 2, Hc - (showHint ? 100 : 70));
+  if (showHint) {
+    const hs = Math.min(15, (Wc * 0.92) / (HINT.length * 0.6));
+    ctx.fillStyle = 'rgb(150,150,160)';
+    ctx.font = `${hs}px "DejaVu Sans Mono", Menlo, Consolas, monospace`;
+    ctx.fillText(HINT, Wc / 2, Hc - 48);
+  }
+  ctx.textAlign = 'left';
+}
+
+// ---- app state ------------------------------------------------------------------------
+const cv = document.getElementById('c');
+let ci = 0, p = 0, t0 = performance.now(), animating = true, raf = 0;
+
+function frame(now) {
+  if (animating) {
+    p = clamp((now - t0) / BLOOM_MS);
+    if (p >= 1) animating = false;
+  }
+  render(cv, innerWidth, innerHeight, Math.min(devicePixelRatio || 1, 2), p, ci, true);
+  raf = animating ? requestAnimationFrame(frame) : 0;
+}
+function kick() { if (!raf) raf = requestAnimationFrame(frame); }
+function bloom() { p = 0; t0 = performance.now(); animating = true; kick(); }
+
+// tap anywhere -> next colour
+addEventListener('pointerdown', e => {
+  if (e.target.closest('.pill')) return;
+  ci = (ci + 1) % PALETTE.length;
+  kick();
+});
+document.getElementById('again').addEventListener('click', bloom);
+document.getElementById('wall').addEventListener('click', () => {
+  const out = document.createElement('canvas');
+  render(out, 1594, 996, 1, 1, ci, false);
+  out.toBlob(blob => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'bouquet-' + PALETTE[ci][0].toLowerCase().replace(/\s+/g, '-') + '.png';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  });
+});
+let rz; addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(kick, 120); });
+
+kick();
+</script>
+</body>
+</html>
